@@ -1,0 +1,849 @@
+// ============================================================================
+// EATWELL — ONE-PASTE IMPLEMENTATION BLUEPRINT (TypeScript + React + Firebase)
+// ============================================================================
+//
+// This single file contains multiple "virtual files". Search for "file:" headers,
+// copy each section into its respective path in your project, or keep as a single
+// reference doc for now.
+//
+// Contents:
+//  1) src/lib/types.ts
+//  2) src/lib/calc.ts
+//  3) src/lib/planner.ts
+//  4) src/lib/premium.ts
+//  5) src/lib/shopping.ts
+//  6) src/data/seed-recipes.json (example records)
+//  7) apps/web/src/components/Onboarding.tsx
+//  8) firebase/firestore.rules
+//  9) functions/src/stripeWebhook.ts
+// 10) functions/src/planFunctions.ts
+// 11) functions/src/index.ts
+//
+// Notes:
+// - All nutrition math is deterministic.
+// - Recipes are server-managed; clients read-only.
+// - Premium gates enforced by Security Rules + Function checks.
+// - Adjust import paths to match your monorepo / Vite / Next.js structure.
+// ============================================================================
+
+
+
+// ============================================================================
+// file: src/lib/types.ts
+// ============================================================================
+export type Sex = 'male' | 'female';
+export type GoalType = 'loss' | 'gain' | 'maintain' | 'endurance';
+export type Activity = 'sedentary'|'light'|'moderate'|'very'|'extra';
+
+export interface UserProfile {
+  uid: string;
+  createdAt: number;
+  displayName?: string;
+  sex: Sex;              // required for BMR formula
+  age: number;           // years
+  heightCm: number;
+  weightKg: number;
+  activityLevel: Activity;
+}
+
+export interface Preferences {
+  mealsPerDay: 3|4|5;
+  diet?: 'none'|'vegetarian'|'vegan'|'pescatarian'|'keto'|'lowFODMAP';
+  allergies?: string[];    // 'peanut', 'gluten', etc.
+  cuisineLikes?: string[]; // 'mediterranean', 'asian', ...
+  timePerMeal?: 'quick'|'standard'|'weekend';
+  budgetLevel?: 'low'|'medium'|'high';
+}
+
+export interface Goal {
+  type: GoalType;
+  createdAt: number;
+  targetRatePerWeekKg?: number; // e.g., -0.4 for loss, +0.25 for gain
+}
+
+export interface IngredientRef { id: string; grams: number; }
+export interface IngredientInfo {
+  id: string;
+  name: string;
+  kcalPer100g:number;
+  proteinPer100g:number;
+  carbsPer100g:number;
+  fatPer100g:number;
+  aisle?: 'produce'|'meat'|'dairy'|'pantry'|'frozen'|'bakery'|'other';
+  unitSizeGrams?: number; // e.g., can size; if provided, shopping rounds up by this
+}
+
+export interface Recipe {
+  id: string;
+  name: string;
+  mealType: 'breakfast'|'lunch'|'dinner'|'snack';
+  baseServings: 1;
+  baseMacros: { kcal:number; protein:number; carbs:number; fat:number };
+  ingredients: IngredientRef[];
+  tags?: string[];
+  prepMinutes?: number;
+  instructions?: string;
+  serverManaged: true;
+  costIndex?: number; // rough 1..5
+  diet?: Preferences['diet']; // optional tag
+  allergens?: string[]; // e.g., ['peanut','gluten']
+}
+
+export interface Meal {
+  recipeId: string;
+  scaledServings: number;
+  macros: { kcal:number; protein:number; carbs:number; fat:number };
+}
+
+export type Weekday = 'Mon'|'Tue'|'Wed'|'Thu'|'Fri'|'Sat'|'Sun';
+
+export interface DayPlan {
+  date: string; // ISO
+  target: { kcal:number; protein:number; carbs:number; fat:number };
+  meals: Meal[];
+}
+
+export interface WeekPlan {
+  id: string; // e.g., 2025-W33
+  createdAt: number;
+  days: Record<Weekday, DayPlan>;
+}
+
+
+
+// ============================================================================
+// file: src/lib/calc.ts
+// ============================================================================
+import type { Sex, Activity, GoalType } from './types';
+
+const ACTIVITY_MULTIPLIER: Record<Activity, number> = {
+  sedentary: 1.2,
+  light: 1.375,
+  moderate: 1.55,
+  very: 1.725,
+  extra: 1.9
+};
+
+export function mifflinStJeor(sex: Sex, weightKg: number, heightCm: number, age: number): number {
+  const base = 10*weightKg + 6.25*heightCm - 5*age;
+  return Math.round(sex === 'male' ? base + 5 : base - 161);
+}
+
+export function tdee(bmr: number, activity: Activity): number {
+  return Math.round(bmr * ACTIVITY_MULTIPLIER[activity]);
+}
+
+export function calorieTarget(tdeeVal: number, goal: GoalType, ratePerWeekKg?: number): number {
+  // 1 kg fat ≈ 7700 kcal. Weekly delta = 7700 * ratePerWeekKg.
+  if (goal === 'maintain') return tdeeVal;
+  const weeklyDelta = (ratePerWeekKg ?? (goal === 'loss' ? -0.4 : 0.25)) * 7700;
+  const dailyDelta = weeklyDelta / 7;
+  return Math.max(1200, Math.round(tdeeVal + dailyDelta)); // floor at 1200 to be conservative
+}
+
+export function macroTargets(calories: number, weightKg: number, goal: GoalType) {
+  // Protein & fat anchored to body weight; carbs fill remainder.
+  const pPerKg = goal === 'loss' ? 2.2 : goal === 'gain' ? 2.0 : goal === 'endurance' ? 1.4 : 1.8;
+  let proteinG = Math.round(pPerKg * weightKg);
+
+  if (goal === 'endurance') {
+    const carbsG = Math.round(6 * weightKg); // mid-range endurance day
+    const proteinKcal = proteinG * 4;
+    const carbsKcal = carbsG * 4;
+    let fatKcal = Math.max(Math.round(0.20 * calories), calories - (proteinKcal + carbsKcal));
+    if (fatKcal < 0) fatKcal = Math.round(0.20 * calories);
+    const fatG = Math.round(fatKcal / 9);
+    const adjCarbsG = Math.max(0, Math.round((calories - proteinKcal - fatKcal) / 4));
+    return { protein: proteinG, fat: fatG, carbs: adjCarbsG, kcal: calories };
+  }
+
+  const fatPerKg = goal === 'gain' ? 1.0 : 0.8; // g/kg
+  let fatG = Math.round(fatPerKg * weightKg);
+  const minFatG = Math.round(0.20 * calories / 9);
+  const maxFatG = Math.round(0.35 * calories / 9);
+  fatG = Math.min(Math.max(fatG, minFatG), maxFatG);
+
+  const proteinKcal = proteinG * 4;
+  const fatKcal = fatG * 9;
+  const carbKcal = Math.max(0, calories - proteinKcal - fatKcal);
+  const carbsG = Math.round(carbKcal / 4);
+
+  return { protein: proteinG, fat: fatG, carbs: carbsG, kcal: calories };
+}
+
+
+
+// ============================================================================
+// file: src/lib/planner.ts
+// ============================================================================
+import type { Preferences, Recipe, WeekPlan, DayPlan, Meal, Weekday } from './types';
+
+const DAYS: Weekday[] = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+export function generateWeeklyPlan(
+  dailyTargets: {kcal:number; protein:number; carbs:number; fat:number},
+  recipes: Recipe[],
+  weekId: string,
+  prefs: Preferences
+): WeekPlan {
+  const mealSplit = prefs.mealsPerDay === 3
+    ? [0.25, 0.35, 0.40]               // breakfast, lunch, dinner
+    : prefs.mealsPerDay === 4
+      ? [0.20, 0.30, 0.35, 0.15]       // + snack
+      : [0.18, 0.27, 0.33, 0.12, 0.10];// 5 meals (more granular)
+
+  const mealTypes = ((): Array<'breakfast'|'lunch'|'dinner'|'snack'> => {
+    if (prefs.mealsPerDay === 3) return ['breakfast','lunch','dinner'];
+    if (prefs.mealsPerDay === 4) return ['breakfast','lunch','dinner','snack'];
+    return ['breakfast','lunch','dinner','snack','snack'];
+  })();
+
+  function filtersOk(r: Recipe): boolean {
+    if (prefs.diet && prefs.diet !== 'none' && r.diet && r.diet !== prefs.diet) return false;
+    if (prefs.allergies && prefs.allergies.length) {
+      if (r.allergens && r.allergens.some(a => prefs.allergies!.includes(a))) return false;
+    }
+    return true;
+  }
+
+  function pickMeal(mealType: Recipe['mealType'], target: {kcal:number; protein:number; carbs:number; fat:number}, usedIds:Set<string>): Meal {
+    const cands = recipes.filter(r => r.mealType === mealType && filtersOk(r));
+    let best: {score:number; meal: Meal; id: string} | null = null;
+
+    for (const r of cands) {
+      const sRaw = target.kcal / r.baseMacros.kcal;
+      const s = [0.75,1.0,1.25,1.5,1.75,2.0].reduce((a,b)=> Math.abs(b-sRaw)<Math.abs(a-sRaw)?b:a);
+      const m = {
+        recipeId: r.id,
+        scaledServings: s,
+        macros: {
+          kcal: Math.round(r.baseMacros.kcal * s),
+          protein: Math.round(r.baseMacros.protein * s),
+          carbs: Math.round(r.baseMacros.carbs * s),
+          fat: Math.round(r.baseMacros.fat * s)
+        }
+      };
+      const gaps = {
+        kcal: Math.abs(m.macros.kcal - target.kcal),
+        protein: Math.abs(m.macros.protein - target.protein),
+        carbs: Math.abs(m.macros.carbs - target.carbs)
+      };
+      const repeatPenalty = usedIds.has(r.id) ? 150 : 0;
+      const prep = (r.prepMinutes ?? 20);
+      const cost = r.costIndex ?? 3;
+      const score = gaps.kcal*0.5 + gaps.protein*1.0 + gaps.carbs*0.2 + prep*0.4 + cost*5 + repeatPenalty;
+      if (!best || score < best.score) best = {score, meal: m, id: r.id};
+    }
+    const chosen = best!.meal;
+    usedIds.add(best!.id);
+    return chosen;
+  }
+
+  const plan: WeekPlan = { id: weekId, createdAt: Date.now(), days: {} as any };
+  for (const day of DAYS) {
+    const used = new Set<string>();
+    const targetsPerMeal = mealSplit.map(frac => ({
+      kcal: Math.round(dailyTargets.kcal * frac),
+      protein: Math.round(dailyTargets.protein * frac),
+      carbs: Math.round(dailyTargets.carbs * frac),
+      fat: Math.round(dailyTargets.fat * frac),
+    }));
+
+    const meals = mealTypes.map((mt, i) => pickMeal(mt, targetsPerMeal[i], used));
+    const todayISO = new Date().toISOString().slice(0,10);
+    const dp: DayPlan = { date: todayISO, target: dailyTargets, meals };
+    plan.days[day] = dp;
+  }
+  return plan;
+}
+
+
+
+// ============================================================================
+// file: src/lib/premium.ts
+// ============================================================================
+import type { Recipe } from './types';
+
+// ---------- Fridge Mode ----------
+export function fridgeMode(pantryIds: string[], recipes: Recipe[]) {
+  const pantry = new Set(pantryIds);
+  return recipes
+    .map(r => {
+      const rIng = new Set(r.ingredients.map(i=>i.id));
+      const inter = [...rIng].filter(x=>pantry.has(x)).length;
+      const union = new Set([...rIng, ...pantry]).size;
+      const jaccard = union ? inter/union : 0;
+      const missing = [...rIng].filter(x=>!pantry.has(x)).length;
+      const score = (1 - jaccard) + missing*0.1 + ((r.prepMinutes??20)*0.01);
+      return {recipe: r, score, missing};
+    })
+    .sort((a,b)=>a.score-b.score)
+    .slice(0,10);
+}
+
+// ---------- Macro Target Mode ----------
+// A compact solver that tries discrete portions of a small set of candidate foods (protein, carb, veg, fat add-on)
+// and finds a combination that best matches target macros, with 3–5 items max.
+//
+// You can pass in your own "building blocks" (e.g., chicken, rice, broccoli, olive oil).
+export type Food = {
+  id: string;
+  label: string;
+  // macros per 1.0 "servingUnit" (e.g., per 100g cooked, per 1 tbsp, etc.)
+  kcal: number; protein: number; carbs: number; fat: number;
+  servingUnit: string; // display (e.g. "100g cooked", "1 tbsp")
+  category: 'protein'|'carb'|'veg'|'fat';
+};
+
+export type MacroTarget = { kcal:number; protein:number; carbs:number; fat:number; };
+
+const PORTIONS = [0.5, 1.0, 1.5, 2.0];
+
+function macroError(a: MacroTarget, b: MacroTarget) {
+  const dk = Math.abs(a.kcal - b.kcal) * 0.5;
+  const dp = Math.abs(a.protein - b.protein) * 1.5;
+  const dc = Math.abs(a.carbs - b.carbs) * 0.8;
+  const df = Math.abs(a.fat - b.fat) * 0.8;
+  return dk + dp + dc + df;
+}
+
+export function macroTargetMode(target: MacroTarget, foods: Food[]) {
+  // enforce diversity: pick at most 1 protein, 1–2 carbs, 1 veg, 0–1 fats (olive oil, nuts)
+  const proteins = foods.filter(f=>f.category==='protein').slice(0,5);
+  const carbs = foods.filter(f=>f.category==='carb').slice(0,6);
+  const vegs = foods.filter(f=>f.category==='veg').slice(0,6);
+  const fats = foods.filter(f=>f.category==='fat').slice(0,4);
+
+  type Choice = { items: Array<{food:Food; portion:number}>, macros: MacroTarget, score:number };
+
+  let best: Choice | null = null;
+  for (const p of proteins.length? proteins:[null as any]) {
+    for (const cp of (carbs.length? carbs:[null as any])) {
+      for (const v of (vegs.length? vegs:[null as any])) {
+        for (const fat of ([null, ...fats])) {
+          // portions search
+          for (const ps of (p? PORTIONS:[0])) {
+            for (const cs of (cp? PORTIONS:[0])) {
+              for (const vs of (v? PORTIONS:[0])) {
+                for (const fs of (fat? PORTIONS:[0])) {
+                  const sel = [
+                    p && ps>0 ? {food:p, portion:ps} : null,
+                    cp && cs>0 ? {food:cp, portion:cs} : null,
+                    v && vs>0 ? {food:v, portion:vs} : null,
+                    fat && fs>0 ? {food:fat, portion:fs} : null,
+                  ].filter(Boolean) as Array<{food:Food; portion:number}>;
+                  const count = sel.length;
+                  if (count === 0 || count > 5) continue;
+
+                  const macros = sel.reduce((acc, it) => {
+                    acc.kcal += it.food.kcal * it.portion;
+                    acc.protein += it.food.protein * it.portion;
+                    acc.carbs += it.food.carbs * it.portion;
+                    acc.fat += it.food.fat * it.portion;
+                    return acc;
+                  }, {kcal:0,protein:0,carbs:0,fat:0} as MacroTarget);
+
+                  const baseErr = macroError(macros, target);
+                  const countPenalty = (count-3) > 0 ? (count-3)*40 : (3-count)*15; // encourage ~3 items
+                  const score = baseErr + countPenalty;
+
+                  if (!best || score < best.score) {
+                    best = { items: sel, macros, score };
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return best!;
+}
+
+
+
+// ============================================================================
+// file: src/lib/shopping.ts
+// ============================================================================
+import type { WeekPlan, Recipe } from './types';
+
+export type ShoppingLine = {
+  ingredientId: string;
+  totalGrams: number;
+  roundedDisplay: string; // "2 cans" or "450 g"
+  aisle: string;
+  name?: string;
+};
+
+type RecipeIndex = Record<string, Recipe>;
+type IngredientIndex = Record<string, {
+  id: string; name: string; aisle?: string; unitSizeGrams?: number;
+}>;
+
+export function buildShoppingList(plan: WeekPlan, recipes: RecipeIndex, ingredients: IngredientIndex): ShoppingLine[] {
+  const totals = new Map<string, number>();
+
+  for (const day of Object.values(plan.days)) {
+    for (const meal of day.meals) {
+      const rec = recipes[meal.recipeId];
+      if (!rec) continue;
+      for (const ing of rec.ingredients) {
+        const grams = ing.grams * meal.scaledServings;
+        totals.set(ing.id, (totals.get(ing.id) ?? 0) + grams);
+      }
+    }
+  }
+
+  const lines: ShoppingLine[] = [];
+  for (const [ingredientId, totalGrams] of totals.entries()) {
+    const meta = ingredients[ingredientId];
+    let roundedDisplay = `${Math.round(totalGrams)} g`;
+    if (meta?.unitSizeGrams && meta.unitSizeGrams > 0) {
+      const units = Math.ceil(totalGrams / meta.unitSizeGrams);
+      roundedDisplay = `${units} × ${meta.unitSizeGrams} g`;
+    } else {
+      // heuristic rounding by category
+      const aisle = meta?.aisle ?? 'other';
+      if (aisle === 'produce') {
+        const rounded = Math.round(totalGrams / 25) * 25;
+        roundedDisplay = `${rounded} g`;
+      } else if (aisle === 'pantry') {
+        const rounded = Math.round(totalGrams / 50) * 50;
+        roundedDisplay = `${rounded} g`;
+      }
+    }
+
+    lines.push({
+      ingredientId,
+      totalGrams,
+      roundedDisplay,
+      aisle: meta?.aisle ?? 'other',
+      name: meta?.name
+    });
+  }
+
+  // group by aisle-ish ordering
+  const order = ['produce','meat','dairy','pantry','frozen','bakery','other'];
+  lines.sort((a,b) => {
+    const ai = order.indexOf(a.aisle);
+    const bi = order.indexOf(b.aisle);
+    if (ai !== bi) return ai - bi;
+    return (a.name ?? a.ingredientId).localeCompare(b.name ?? b.ingredientId);
+  });
+
+  return lines;
+}
+
+
+
+// ============================================================================
+// file: src/data/seed-recipes.json
+// (Example seed—you’d store this server-side and import via Admin SDK.)
+// ============================================================================
+/*
+[
+  {
+    "id": "oats_berries_whey",
+    "name": "Oats + Berries + Whey",
+    "mealType": "breakfast",
+    "baseServings": 1,
+    "baseMacros": { "kcal": 420, "protein": 33, "carbs": 55, "fat": 9 },
+    "ingredients": [
+      {"id":"oats_rolled","grams":70},
+      {"id":"whey_vanilla","grams":30},
+      {"id":"blueberries","grams":80},
+      {"id":"almond_milk_unsweet","grams":200}
+    ],
+    "prepMinutes": 5,
+    "serverManaged": true,
+    "costIndex": 1
+  },
+  {
+    "id": "chicken_rice_broccoli",
+    "name": "Chicken, Rice & Broccoli",
+    "mealType": "dinner",
+    "baseServings": 1,
+    "baseMacros": { "kcal": 600, "protein": 50, "carbs": 70, "fat": 12 },
+    "ingredients": [
+      {"id":"chicken_breast_raw","grams":180},
+      {"id":"rice_white_cooked","grams":200},
+      {"id":"broccoli","grams":120}
+    ],
+    "prepMinutes": 25,
+    "serverManaged": true,
+    "costIndex": 2
+  }
+]
+*/
+
+
+
+// ============================================================================
+// file: apps/web/src/components/Onboarding.tsx
+// ============================================================================
+import { useState } from 'react';
+import type { Sex, Activity, GoalType } from '../../lib/types';
+import { mifflinStJeor, tdee, calorieTarget, macroTargets } from '../../lib/calc';
+
+export default function Onboarding() {
+  const [step, setStep] = useState(1);
+  const [age, setAge] = useState<number>(25);
+  const [sex, setSex] = useState<Sex>('male');
+  const [heightCm, setHeightCm] = useState<number>(175);
+  const [weightKg, setWeightKg] = useState<number>(75);
+  const [activity, setActivity] = useState<Activity>('moderate');
+  const [goal, setGoal] = useState<GoalType>('maintain');
+
+  function next(){ setStep(s => Math.min(5, s+1)); }
+  function prev(){ setStep(s => Math.max(1, s-1)); }
+
+  function finish() {
+    const bmr = mifflinStJeor(sex, weightKg, heightCm, age);
+    const t = tdee(bmr, activity);
+    const kcal = calorieTarget(t, goal);
+    const macros = macroTargets(kcal, weightKg, goal);
+    // TODO: save to Firestore and trigger plan generation Cloud Function
+    alert(`Daily target: ${macros.kcal} kcal | P${macros.protein} C${macros.carbs} F${macros.fat}`);
+  }
+
+  return (
+    <div className="mx-auto max-w-md p-6">
+      <h1 className="text-2xl font-semibold mb-4">EatWell Setup</h1>
+
+      {step===1 && (
+        <div className="space-y-3">
+          <label className="block">
+            <span>Age</span>
+            <input className="mt-1 w-full border rounded p-2" type="number" min={13} max={100} value={age} onChange={e=>setAge(+e.target.value)} />
+          </label>
+          <label className="block">
+            <span>Sex (for BMR)</span>
+            <select className="mt-1 w-full border rounded p-2" value={sex} onChange={e=>setSex(e.target.value as any)}>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </label>
+        </div>
+      )}
+
+      {step===2 && (
+        <div className="space-y-3">
+          <label className="block">
+            <span>Height (cm)</span>
+            <input className="mt-1 w-full border rounded p-2" type="number" value={heightCm} onChange={e=>setHeightCm(+e.target.value)} />
+          </label>
+          <label className="block">
+            <span>Weight (kg)</span>
+            <input className="mt-1 w-full border rounded p-2" type="number" value={weightKg} onChange={e=>setWeightKg(+e.target.value)} />
+          </label>
+        </div>
+      )}
+
+      {step===3 && (
+        <div className="space-y-3">
+          <label className="block">
+            <span>Activity level</span>
+            <select className="mt-1 w-full border rounded p-2" value={activity} onChange={e=>setActivity(e.target.value as any)}>
+              <option value="sedentary">Sedentary</option>
+              <option value="light">Light (1–3x/wk)</option>
+              <option value="moderate">Moderate (3–5x/wk)</option>
+              <option value="very">Very (6–7x/wk)</option>
+              <option value="extra">Extra (2-a-days)</option>
+            </select>
+          </label>
+        </div>
+      )}
+
+      {step===4 && (
+        <div className="space-y-3">
+          <label className="block">
+            <span>Goal</span>
+            <select className="mt-1 w-full border rounded p-2" value={goal} onChange={e=>setGoal(e.target.value as any)}>
+              <option value="loss">Weight loss</option>
+              <option value="gain">Muscle gain</option>
+              <option value="maintain">Maintenance</option>
+              <option value="endurance">Endurance</option>
+            </select>
+          </label>
+        </div>
+      )}
+
+      {step===5 && (
+        <div className="space-y-2 text-sm text-gray-700">
+          <p>We’ll compute your calories and macros using Mifflin–St Jeor + activity, then build your weekly plan.</p>
+          <p className="italic">Heads up: This isn’t medical advice. If you have a condition, talk to your clinician.</p>
+        </div>
+      )}
+
+      <div className="mt-6 flex items-center justify-between">
+        <button className="px-3 py-2 border rounded" onClick={prev} disabled={step===1}>Back</button>
+        {step<5
+          ? <button className="px-3 py-2 bg-black text-white rounded" onClick={next}>Next</button>
+          : <button className="px-3 py-2 bg-black text-white rounded" onClick={finish}>Finish</button>}
+      </div>
+    </div>
+  );
+}
+
+
+
+// ============================================================================
+// file: firebase/firestore.rules
+// ============================================================================
+/*
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+    function isPremium() { return signedIn() && request.auth.token.premium == true; }
+
+    match /users/{uid} {
+      allow read, create: if isOwner(uid);
+      allow update, delete: if isOwner(uid);
+
+      match /{col=profile|preferences|goals|plans|pantry|favorites|intakeLogs}/{docId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Premium-only request queues for Cloud Functions
+      match /fridgeRequests/{id} {
+        allow create, read, delete: if isOwner(uid) && isPremium();
+      }
+      match /macroTargetRequests/{id} {
+        allow create, read, delete: if isOwner(uid) && isPremium();
+      }
+    }
+
+    // Public, server-managed recipes
+    match /recipes/{id} {
+      allow read: if true;
+      allow write: if false; // only via Admin SDK or privileged env
+    }
+
+    // Ingredient lookup is read-only
+    match /lookups/ingredients/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
+*/
+
+
+
+// ============================================================================
+// file: functions/src/stripeWebhook.ts
+// ============================================================================
+import * as functions from 'firebase-functions';
+import Stripe from 'stripe';
+import * as admin from 'firebase-admin';
+admin.initializeApp();
+
+const stripe = new Stripe(process.env.STRIPE_SECRET as string, { apiVersion: '2024-06-20' });
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET as string;
+
+async function setPremium(uid: string, premium: boolean) {
+  await admin.auth().setCustomUserClaims(uid, { premium });
+  await admin.auth().revokeRefreshTokens(uid);
+  await admin.firestore().doc(`users/${uid}`).set({ premium, premiumUpdatedAt: Date.now() }, { merge: true });
+}
+
+export const stripeWebhook = functions.https.onRequest(async (req, res) => {
+  const sig = req.headers['stripe-signature'] as string;
+  let event: Stripe.Event;
+  try {
+    event = stripe.webhooks.constructEvent(req.rawBody, sig, endpointSecret);
+  } catch (err:any) {
+    console.error('Webhook signature verification failed', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  const data = event.data.object as any;
+  // Your mapping: store firebaseUid in checkout session metadata or maintain a mapping collection.
+  const uid = data?.metadata?.firebaseUid || data?.client_reference_id;
+  if (!uid) {
+    console.error('Missing firebaseUid in Stripe object metadata.');
+    return res.status(200).json({ received: true }); // avoid retries; log for manual fix
+  }
+
+  try {
+    if (event.type === 'checkout.session.completed') {
+      await setPremium(uid, true);
+    } else if (event.type === 'customer.subscription.deleted') {
+      await setPremium(uid, false);
+    } else if (event.type === 'customer.subscription.updated') {
+      const active = data?.status === 'active' || data?.status === 'trialing';
+      await setPremium(uid, active);
+    }
+    res.json({ received: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).send('Internal');
+  }
+});
+
+
+
+// ============================================================================
+// file: functions/src/planFunctions.ts
+// (Minimal callable/scheduled Functions for plan generation + premium modes)
+// ============================================================================
+import * as functions2 from 'firebase-functions';
+import * as admin2 from 'firebase-admin';
+import { generateWeeklyPlan as genPlanLocal } from '../../src/lib/planner'; // Adjust path based on repo
+import { fridgeMode as fridgeLocal, macroTargetMode as macroLocal } from '../../src/lib/premium';
+import { mifflinStJeor, tdee, calorieTarget, macroTargets } from '../../src/lib/calc';
+import type { Preferences, Recipe, WeekPlan, UserProfile, Goal } from '../../src/lib/types';
+
+const db = admin2.firestore();
+
+function assertAuth(context: functions2.https.CallableContext) {
+  if (!context.auth) {
+    throw new functions2.https.HttpsError('unauthenticated', 'You must be signed in.');
+  }
+}
+
+function assertPremium(context: functions2.https.CallableContext) {
+  if (!context.auth?.token?.premium) {
+    throw new functions2.https.HttpsError('permission-denied', 'Premium required.');
+  }
+}
+
+export const generateWeeklyPlanCallable = functions2.https.onCall(async (data, context) => {
+  assertAuth(context);
+  const uid = context.auth!.uid;
+
+  // Fetch user core data
+  const profSnap = await db.doc(`users/${uid}/profile/default`).get();
+  const prefSnap = await db.doc(`users/${uid}/preferences/default`).get();
+  const goalSnap = await db.doc(`users/${uid}/goals/current`).get();
+
+  if (!profSnap.exists || !prefSnap.exists || !goalSnap.exists) {
+    throw new functions2.https.HttpsError('failed-precondition', 'Missing profile, preferences, or goal.');
+  }
+
+  const profile = profSnap.data() as UserProfile;
+  const prefs = prefSnap.data() as Preferences;
+  const goal = goalSnap.data() as Goal;
+
+  const bmr = mifflinStJeor(profile.sex, profile.weightKg, profile.heightCm, profile.age);
+  const t = tdee(bmr, profile.activityLevel);
+  const kcal = calorieTarget(t, goal.type, goal.targetRatePerWeekKg);
+  const targets = macroTargets(kcal, profile.weightKg, goal.type);
+
+  // Load server-managed recipes
+  const recsSnap = await db.collection('recipes').limit(200).get();
+  const recipes = recsSnap.docs.map(d => ({ id: d.id, ...d.data() })) as Recipe[];
+
+  const weekId = data?.weekId ?? getCurrentWeekId();
+  const plan: WeekPlan = genPlanLocal(targets, recipes, weekId, prefs);
+
+  // Write plan under user
+  const batch = db.batch();
+  const baseRef = db.doc(`users/${uid}/plans/${weekId}`);
+  batch.set(baseRef, { id: plan.id, createdAt: plan.createdAt });
+  for (const [day, dp] of Object.entries(plan.days)) {
+    batch.set(baseRef.collection('days').doc(day), dp);
+  }
+  await batch.commit();
+
+  return { ok: true, weekId };
+});
+
+export const fridgeModeCallable = functions2.https.onCall(async (data, context) => {
+  assertAuth(context); assertPremium(context);
+  const pantryIds: string[] = data?.pantryIds ?? [];
+  if (!Array.isArray(pantryIds)) {
+    throw new functions2.https.HttpsError('invalid-argument', 'pantryIds must be an array.');
+  }
+  const recsSnap = await db.collection('recipes').limit(200).get();
+  const recipes = recsSnap.docs.map(d => ({ id: d.id, ...d.data() })) as Recipe[];
+  const results = fridgeLocal(pantryIds, recipes).slice(0,10);
+  return { ok: true, results };
+});
+
+export const macroTargetModeCallable = functions2.https.onCall(async (data, context) => {
+  assertAuth(context); assertPremium(context);
+  // Target macros provided by client (validated server-side)
+  const target = data?.target as {kcal:number; protein:number; carbs:number; fat:number};
+  if (!target || [target.kcal, target.protein, target.carbs, target.fat].some(x => typeof x !== 'number' || x <= 0)) {
+    throw new functions2.https.HttpsError('invalid-argument', 'Valid target macros required.');
+  }
+
+  // For MVP, use a fixed set of building blocks (server-managed lookups later)
+  const foods = [
+    { id:'chicken', label:'Chicken breast', kcal:165, protein:31, carbs:0, fat:3.6, servingUnit:'100g cooked', category:'protein' as const },
+    { id:'tofu', label:'Tofu firm', kcal:144, protein:17, carbs:3, fat:8, servingUnit:'150g', category:'protein' as const },
+    { id:'rice', label:'Rice (cooked)', kcal:130, protein:2.4, carbs:28, fat:0.3, servingUnit:'100g', category:'carb' as const },
+    { id:'oats', label:'Oats (dry)', kcal:379, protein:13, carbs:67, fat:7, servingUnit:'100g', category:'carb' as const },
+    { id:'pasta', label:'Pasta (cooked)', kcal:157, protein:5.8, carbs:30, fat:0.9, servingUnit:'100g', category:'carb' as const },
+    { id:'broccoli', label:'Broccoli', kcal:34, protein:2.8, carbs:7, fat:0.4, servingUnit:'100g', category:'veg' as const },
+    { id:'spinach', label:'Spinach', kcal:23, protein:2.9, carbs:3.6, fat:0.4, servingUnit:'100g', category:'veg' as const },
+    { id:'olive', label:'Olive oil', kcal:119, protein:0, carbs:0, fat:13.5, servingUnit:'1 tbsp (14g)', category:'fat' as const }
+  ];
+
+  const result = macroLocal(target, foods);
+  return { ok: true, result };
+});
+
+export const weeklyAdjustment = functions2.pubsub.schedule('every monday 07:00').timeZone('Etc/UTC').onRun(async () => {
+  // For each user, read last 2 weight logs; adjust calorie target if off-trend; trigger plan regen flag.
+  const users = await db.collection('users').get();
+  for (const userDoc of users.docs) {
+    const uid = userDoc.id;
+    const logs = await db.collection(`users/${uid}/intakeLogs`).orderBy('date','desc').limit(14).get();
+    const weights = logs.docs
+      .map(d => d.data())
+      .filter((d:any) => typeof d.weightKg === 'number' && d.date)
+      .sort((a:any,b:any)=> (a.date < b.date ? -1 : 1));
+
+    if (weights.length >= 2) {
+      const delta = weights[weights.length-1].weightKg - weights[0].weightKg;
+      const weeks = Math.max(1, (weights.length / 7));
+      const ratePerWeek = delta / weeks; // kg/week (positive = gain)
+
+      // Read current goal
+      const goalSnap = await db.doc(`users/${uid}/goals/current`).get();
+      if (!goalSnap.exists) continue;
+      const goal = goalSnap.data() as Goal;
+
+      // Heuristic: if deviating by > 0.2 kg/wk for 2+ weeks, adjust 5–8%
+      const desired = goal.targetRatePerWeekKg ?? (goal.type === 'loss' ? -0.4 : goal.type === 'gain' ? 0.25 : 0);
+      if (Math.abs(ratePerWeek - desired) > 0.2) {
+        const adj = ratePerWeek > desired ? -0.06 : 0.06; // overshooting loss? increase calories; otherwise lower
+        await db.doc(`users/${uid}/preferences/default`).set({ calorieAdjustmentFactor: adj, adjustAt: Date.now() }, { merge: true });
+        // Client can read this flag and request a regen; or trigger callable here if you want:
+        // await generateWeeklyPlanCallable({weekId:getCurrentWeekId()}, { auth: { uid, token: { premium: !!userDoc.get('premium') }}} as any)
+      }
+    }
+  }
+  return null;
+});
+
+function getCurrentWeekId(date = new Date()): string {
+  const tmp = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  // Week number ISO-ish
+  const dayNum = (tmp.getUTCDay() + 6) % 7;
+  tmp.setUTCDate(tmp.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(tmp.getUTCFullYear(),0,4));
+  const week = 1 + Math.round(((tmp.getTime() - firstThursday.getTime())/86400000 - 3 + ((firstThursday.getUTCDay()+6)%7))/7);
+  return `${tmp.getUTCFullYear()}-W${String(week).padStart(2,'0')}`;
+}
+
+
+
+// ============================================================================
+// file: functions/src/index.ts
+// (Export Cloud Functions)
+// ============================================================================
+export { stripeWebhook } from './stripeWebhook';
+export {
+  generateWeeklyPlanCallable,
+  fridgeModeCallable,
+  macroTargetModeCallable,
+  weeklyAdjustment
+} from './planFunctions';
