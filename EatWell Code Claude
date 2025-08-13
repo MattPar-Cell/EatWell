@@ -1,0 +1,698 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  ChefHat, Target, Utensils, TrendingUp, TrendingDown, Activity, 
+  Clock, Users, User, Calendar, ShoppingCart, BarChart3, 
+  Settings, Plus, Minus, Check, X, RefreshCw, Star,
+  Apple, Beef, Fish, Wheat, Coffee, Cookie, Crown, Zap,
+  Refrigerator, Calculator, Heart, Lock
+} from 'lucide-react';
+
+const EatWellApp = () => {
+  const [currentView, setCurrentView] = useState('onboarding');
+  const [userProfile, setUserProfile] = useState({
+    name: '',
+    age: '',
+    weight: '',
+    height: '',
+    gender: 'male',
+    activityLevel: 'moderate',
+    goal: '',
+    dietaryRestrictions: [],
+    targetCalories: 0,
+    macroTargets: { protein: 0, carbs: 0, fat: 0 },
+    isPremium: false
+  });
+  const [selectedWeek, setSelectedWeek] = useState(0);
+  const [mealPlan, setMealPlan] = useState({});
+  const [shoppingList, setShoppingList] = useState([]);
+  const [favorites, setFavorites] = useState([]);
+  const [dailyIntake, setDailyIntake] = useState({});
+  const [isGeneratingMeals, setIsGeneratingMeals] = useState(false);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  
+  // Fridge Mode states
+  const [fridgeIngredients, setFridgeIngredients] = useState([]);
+  const [newIngredient, setNewIngredient] = useState('');
+  
+  // Macro Target Mode states
+  const [customMacroTargets, setCustomMacroTargets] = useState({
+    calories: '',
+    protein: '',
+    carbs: '',
+    fat: ''
+  });
+
+  const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const mealTypes = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
+  
+  const goals = [
+    {
+      id: 'weight_loss',
+      title: 'Weight Loss',
+      icon: TrendingDown,
+      color: 'bg-red-500',
+      description: 'High protein, moderate carbs, caloric deficit',
+      calorieMultiplier: 0.8,
+      macros: { protein: 35, carbs: 30, fat: 35 }
+    },
+    {
+      id: 'muscle_gain',
+      title: 'Muscle Gain',
+      icon: TrendingUp,
+      color: 'bg-green-500',
+      description: 'High protein, higher calories, balanced macros',
+      calorieMultiplier: 1.2,
+      macros: { protein: 30, carbs: 40, fat: 30 }
+    },
+    {
+      id: 'maintenance',
+      title: 'Maintenance',
+      icon: Activity,
+      color: 'bg-blue-500',
+      description: 'Balanced nutrition, steady energy',
+      calorieMultiplier: 1.0,
+      macros: { protein: 25, carbs: 45, fat: 30 }
+    },
+    {
+      id: 'endurance',
+      title: 'Endurance',
+      icon: Zap,
+      color: 'bg-purple-500',
+      description: 'Higher carbs for sustained energy',
+      calorieMultiplier: 1.1,
+      macros: { protein: 20, carbs: 55, fat: 25 }
+    }
+  ];
+
+  const activityLevels = {
+    sedentary: { multiplier: 1.2, label: 'Sedentary (office job)' },
+    light: { multiplier: 1.375, label: 'Light activity (1-3 days/week)' },
+    moderate: { multiplier: 1.55, label: 'Moderate (3-5 days/week)' },
+    active: { multiplier: 1.725, label: 'Active (6-7 days/week)' },
+    veryActive: { multiplier: 1.9, label: 'Very active (2x/day)' }
+  };
+
+  const dietaryOptions = [
+    'Vegetarian', 'Vegan', 'Gluten-Free', 'Dairy-Free', 'Keto', 'Paleo', 'Mediterranean', 'Low-Sodium'
+  ];
+
+  // Sample meal database - in production, this would come from AI API
+  const sampleMeals = {
+    breakfast: [
+      {
+        id: 1,
+        name: 'Protein Power Oats',
+        calories: 420,
+        protein: 28,
+        carbs: 45,
+        fat: 12,
+        time: 10,
+        difficulty: 'Easy',
+        ingredients: ['oats', 'protein powder', 'banana', 'almond milk', 'berries'],
+        instructions: ['Mix oats with protein powder', 'Add almond milk and stir', 'Top with banana and berries'],
+        tags: ['high-protein', 'quick', 'vegetarian']
+      },
+      {
+        id: 2,
+        name: 'Avocado Toast Supreme',
+        calories: 385,
+        protein: 18,
+        carbs: 32,
+        fat: 22,
+        time: 8,
+        difficulty: 'Easy',
+        ingredients: ['whole grain bread', 'avocado', 'eggs', 'tomato', 'feta cheese'],
+        instructions: ['Toast bread until golden', 'Mash avocado with seasoning', 'Top with fried egg and tomato'],
+        tags: ['healthy-fats', 'quick', 'vegetarian']
+      },
+      {
+        id: 3,
+        name: 'Greek Yogurt Parfait',
+        calories: 320,
+        protein: 25,
+        carbs: 35,
+        fat: 8,
+        time: 5,
+        difficulty: 'Easy',
+        ingredients: ['greek yogurt', 'granola', 'mixed berries', 'honey', 'almonds'],
+        instructions: ['Layer yogurt in bowl', 'Add granola and berries', 'Drizzle with honey and top with almonds'],
+        tags: ['high-protein', 'quick', 'vegetarian']
+      }
+    ],
+    lunch: [
+      {
+        id: 4,
+        name: 'Mediterranean Power Bowl',
+        calories: 520,
+        protein: 32,
+        carbs: 38,
+        fat: 24,
+        time: 15,
+        difficulty: 'Easy',
+        ingredients: ['quinoa', 'chicken breast', 'cucumber', 'olives', 'feta cheese', 'olive oil'],
+        instructions: ['Cook quinoa according to package', 'Grill seasoned chicken breast', 'Combine all ingredients in bowl with dressing'],
+        tags: ['balanced', 'mediterranean', 'high-protein']
+      },
+      {
+        id: 5,
+        name: 'Asian Fusion Wrap',
+        calories: 450,
+        protein: 28,
+        carbs: 42,
+        fat: 18,
+        time: 12,
+        difficulty: 'Easy',
+        ingredients: ['whole wheat tortilla', 'grilled chicken', 'cabbage slaw', 'carrots', 'peanut sauce'],
+        instructions: ['Grill chicken with Asian spices', 'Prepare fresh slaw', 'Wrap ingredients in tortilla with sauce'],
+        tags: ['portable', 'asian-inspired', 'high-protein']
+      }
+    ],
+    dinner: [
+      {
+        id: 6,
+        name: 'Salmon Power Plate',
+        calories: 580,
+        protein: 42,
+        carbs: 28,
+        fat: 32,
+        time: 25,
+        difficulty: 'Medium',
+        ingredients: ['salmon fillet', 'sweet potato', 'asparagus', 'olive oil', 'herbs'],
+        instructions: ['Season salmon with herbs', 'Roast sweet potato and asparagus at 425°F', 'Pan-sear salmon for 4-5 minutes each side'],
+        tags: ['omega-3', 'high-protein', 'anti-inflammatory']
+      },
+      {
+        id: 7,
+        name: 'Lean Beef Stir-Fry',
+        calories: 485,
+        protein: 38,
+        carbs: 32,
+        fat: 20,
+        time: 20,
+        difficulty: 'Medium',
+        ingredients: ['lean beef strips', 'mixed vegetables', 'brown rice', 'soy sauce', 'ginger'],
+        instructions: ['Cook brown rice', 'Stir-fry beef until browned', 'Add vegetables and seasonings, serve over rice'],
+        tags: ['high-protein', 'asian-inspired', 'balanced']
+      }
+    ],
+    snack: [
+      {
+        id: 8,
+        name: 'Power Protein Smoothie',
+        calories: 285,
+        protein: 25,
+        carbs: 28,
+        fat: 8,
+        time: 5,
+        difficulty: 'Easy',
+        ingredients: ['protein powder', 'banana', 'spinach', 'almond milk', 'ice'],
+        instructions: ['Add all ingredients to blender', 'Blend until smooth and creamy', 'Serve immediately'],
+        tags: ['post-workout', 'quick', 'green']
+      },
+      {
+        id: 9,
+        name: 'Nut Butter Energy Balls',
+        calories: 240,
+        protein: 12,
+        carbs: 20,
+        fat: 14,
+        time: 15,
+        difficulty: 'Easy',
+        ingredients: ['almond butter', 'oats', 'honey', 'chia seeds', 'dark chocolate chips'],
+        instructions: ['Mix all ingredients in bowl', 'Roll into small balls', 'Refrigerate for 30 minutes'],
+        tags: ['make-ahead', 'portable', 'energy-boost']
+      }
+    ]
+  };
+
+  // Calculate BMR and daily calories
+  const calculateCalories = () => {
+    if (!userProfile.age || !userProfile.weight || !userProfile.height) return 0;
+    
+    const weight = parseFloat(userProfile.weight);
+    const height = parseFloat(userProfile.height);
+    const age = parseFloat(userProfile.age);
+    
+    // Mifflin-St Jeor Equation
+    let bmr;
+    if (userProfile.gender === 'male') {
+      bmr = 10 * weight + 6.25 * height - 5 * age + 5;
+    } else {
+      bmr = 10 * weight + 6.25 * height - 5 * age - 161;
+    }
+    
+    const tdee = bmr * activityLevels[userProfile.activityLevel].multiplier;
+    const goalCalories = tdee * (goals.find(g => g.id === userProfile.goal)?.calorieMultiplier || 1);
+    
+    return Math.round(goalCalories);
+  };
+
+  // Generate meal plan for the week
+  const generateWeeklyMealPlan = async () => {
+    setIsGeneratingMeals(true);
+    
+    // Simulate AI API call delay
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    const newMealPlan = {};
+    
+    daysOfWeek.forEach((day, dayIndex) => {
+      newMealPlan[day] = {};
+      mealTypes.forEach(mealType => {
+        const availableMeals = sampleMeals[mealType.toLowerCase()] || [];
+        if (availableMeals.length > 0) {
+          // In production, this would be an AI-generated unique meal for each day
+          const randomMeal = availableMeals[Math.floor(Math.random() * availableMeals.length)];
+          newMealPlan[day][mealType] = {
+            ...randomMeal,
+            id: `${day}-${mealType}-${Date.now()}`, // Unique ID for each day
+            aiGenerated: true,
+            freshDate: new Date().toISOString()
+          };
+        }
+      });
+    });
+    
+    setMealPlan(newMealPlan);
+    setIsGeneratingMeals(false);
+  };
+
+  // Generate meals from fridge ingredients (Premium feature)
+  const generateFridgeMeals = async () => {
+    if (!userProfile.isPremium) {
+      setShowPremiumModal(true);
+      return;
+    }
+    
+    setIsGeneratingMeals(true);
+    
+    // Simulate AI API call with fridge ingredients
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    
+    // In production, this would send fridgeIngredients to AI API
+    const fridgeBasedMeals = {};
+    daysOfWeek.forEach(day => {
+      fridgeBasedMeals[day] = {};
+      mealTypes.forEach(mealType => {
+        const availableMeals = sampleMeals[mealType.toLowerCase()] || [];
+        if (availableMeals.length > 0) {
+          const meal = availableMeals[Math.floor(Math.random() * availableMeals.length)];
+          fridgeBasedMeals[day][mealType] = {
+            ...meal,
+            id: `fridge-${day}-${mealType}-${Date.now()}`,
+            aiGenerated: true,
+            fridgeBased: true,
+            usedIngredients: fridgeIngredients.slice(0, Math.min(3, fridgeIngredients.length))
+          };
+        }
+      });
+    });
+    
+    setMealPlan(fridgeBasedMeals);
+    setIsGeneratingMeals(false);
+  };
+
+  // Generate meals for custom macro targets (Premium feature)
+  const generateMacroTargetMeals = async () => {
+    if (!userProfile.isPremium) {
+      setShowPremiumModal(true);
+      return;
+    }
+    
+    if (!customMacroTargets.calories || !customMacroTargets.protein) {
+      alert('Please fill in your custom macro targets');
+      return;
+    }
+    
+    setIsGeneratingMeals(true);
+    
+    // Simulate AI API call with custom macros
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    
+    // In production, this would generate meals hitting exact macro targets
+    const macroOptimizedMeals = {};
+    daysOfWeek.forEach(day => {
+      macroOptimizedMeals[day] = {};
+      mealTypes.forEach(mealType => {
+        const availableMeals = sampleMeals[mealType.toLowerCase()] || [];
+        if (availableMeals.length > 0) {
+          const meal = availableMeals[Math.floor(Math.random() * availableMeals.length)];
+          macroOptimizedMeals[day][mealType] = {
+            ...meal,
+            id: `macro-${day}-${mealType}-${Date.now()}`,
+            aiGenerated: true,
+            macroOptimized: true,
+            targetMacros: customMacroTargets
+          };
+        }
+      });
+    });
+    
+    setMealPlan(macroOptimizedMeals);
+    setIsGeneratingMeals(false);
+  };
+
+  // Generate shopping list from meal plan
+  const generateShoppingList = () => {
+    const ingredients = new Set();
+    
+    Object.values(mealPlan).forEach(dayMeals => {
+      Object.values(dayMeals).forEach(meal => {
+        meal.ingredients?.forEach(ingredient => ingredients.add(ingredient));
+      });
+    });
+    
+    setShoppingList([...ingredients].map(item => ({ 
+      name: item, 
+      checked: false, 
+      id: Date.now() + Math.random() 
+    })));
+  };
+
+  // Toggle favorite meal
+  const toggleFavorite = (meal) => {
+    const isFavorited = favorites.some(fav => fav.id === meal.id);
+    if (isFavorited) {
+      setFavorites(favorites.filter(fav => fav.id !== meal.id));
+    } else {
+      setFavorites([...favorites, meal]);
+    }
+  };
+
+  // Add ingredient to fridge
+  const addFridgeIngredient = () => {
+    if (newIngredient.trim()) {
+      setFridgeIngredients([...fridgeIngredients, {
+        id: Date.now(),
+        name: newIngredient.trim()
+      }]);
+      setNewIngredient('');
+    }
+  };
+
+  // Remove ingredient from fridge
+  const removeFridgeIngredient = (id) => {
+    setFridgeIngredients(fridgeIngredients.filter(ing => ing.id !== id));
+  };
+
+  const completeOnboarding = () => {
+    const calories = calculateCalories();
+    const goalData = goals.find(g => g.id === userProfile.goal);
+    
+    setUserProfile(prev => ({
+      ...prev,
+      targetCalories: calories,
+      macroTargets: {
+        protein: Math.round((calories * goalData.macros.protein / 100) / 4),
+        carbs: Math.round((calories * goalData.macros.carbs / 100) / 4),
+        fat: Math.round((calories * goalData.macros.fat / 100) / 9)
+      }
+    }));
+    
+    setCurrentView('dashboard');
+  };
+
+  // Premium Modal Component
+  const PremiumModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+        <div className="text-center">
+          <div className="bg-gradient-to-r from-yellow-400 to-orange-500 p-3 rounded-full w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+            <Crown className="text-white" size={24} />
+          </div>
+          <h2 className="text-2xl font-bold mb-2">Upgrade to EatWell Premium</h2>
+          <p className="text-gray-600 mb-6">Unlock advanced AI-powered features</p>
+          
+          <div className="space-y-3 text-left mb-6">
+            <div className="flex items-center gap-3">
+              <Refrigerator className="text-green-500" size={20} />
+              <span>Fridge Mode - Generate meals from your ingredients</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Calculator className="text-blue-500" size={20} />
+              <span>Macro Target Mode - Hit exact nutrition goals</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Star className="text-yellow-500" size={20} />
+              <span>Unlimited favorites and meal history</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Zap className="text-purple-500" size={20} />
+              <span>Priority AI meal generation</span>
+            </div>
+          </div>
+          
+          <div className="space-y-3">
+            <button
+              onClick={() => {
+                setUserProfile(prev => ({...prev, isPremium: true}));
+                setShowPremiumModal(false);
+                // In production: integrate with Stripe
+                alert('Premium activated! (Demo mode)');
+              }}
+              className="w-full bg-gradient-to-r from-yellow-400 to-orange-500 text-white font-bold py-3 rounded-lg hover:from-yellow-500 hover:to-orange-600 transition-colors"
+            >
+              Upgrade Now - $9.99/month
+            </button>
+            <button
+              onClick={() => setShowPremiumModal(false)}
+              className="w-full bg-gray-200 text-gray-700 font-medium py-2 rounded-lg hover:bg-gray-300 transition-colors"
+            >
+              Maybe Later
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const OnboardingView = () => {
+    const [step, setStep] = useState(1);
+    const totalSteps = 5;
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 via-blue-50 to-purple-50 p-6">
+        <div className="max-w-2xl mx-auto">
+          <div className="text-center mb-8">
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <div className="bg-gradient-to-r from-green-600 to-blue-600 p-3 rounded-xl">
+                <Apple className="text-white" size={32} />
+              </div>
+              <h1 className="text-4xl font-bold bg-gradient-to-r from-green-600 to-blue-600 bg-clip-text text-transparent">
+                EatWell
+              </h1>
+            </div>
+            <p className="text-gray-600 text-lg">AI-powered nutrition for your fitness goals</p>
+            <div className="mt-4">
+              <div className="flex justify-center space-x-2">
+                {[...Array(totalSteps)].map((_, i) => (
+                  <div key={i} className={`h-2 w-8 rounded-full ${i < step ? 'bg-green-500' : 'bg-gray-200'}`} />
+                ))}
+              </div>
+              <p className="text-sm text-gray-500 mt-2">Step {step} of {totalSteps}</p>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-lg p-8">
+            {step === 1 && (
+              <div className="space-y-6">
+                <h2 className="text-2xl font-bold text-gray-800">Welcome to EatWell!</h2>
+                <div className="space-y-4">
+                  <input
+                    type="text"
+                    placeholder="Your name"
+                    className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    value={userProfile.name}
+                    onChange={e => setUserProfile({...userProfile, name: e.target.value})}
+                  />
+                  <div className="grid grid-cols-2 gap-4">
+                    <input
+                      type="number"
+                      placeholder="Age"
+                      className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      value={userProfile.age}
+                      onChange={e => setUserProfile({...userProfile, age: e.target.value})}
+                    />
+                    <select
+                      className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      value={userProfile.gender}
+                      onChange={e => setUserProfile({...userProfile, gender: e.target.value})}
+                    >
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {step === 2 && (
+              <div className="space-y-6">
+                <h2 className="text-2xl font-bold text-gray-800">Your Physical Stats</h2>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Weight (kg)</label>
+                    <input
+                      type="number"
+                      className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      value={userProfile.weight}
+                      onChange={e => setUserProfile({...userProfile, weight: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Height (cm)</label>
+                    <input
+                      type="number"
+                      className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      value={userProfile.height}
+                      onChange={e => setUserProfile({...userProfile, height: e.target.value})}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {step === 3 && (
+              <div className="space-y-6">
+                <h2 className="text-2xl font-bold text-gray-800">Activity Level</h2>
+                <div className="space-y-3">
+                  {Object.entries(activityLevels).map(([key, level]) => (
+                    <label key={key} className="flex items-center p-4 border rounded-lg cursor-pointer hover:bg-gray-50">
+                      <input
+                        type="radio"
+                        name="activity"
+                        value={key}
+                        checked={userProfile.activityLevel === key}
+                        onChange={e => setUserProfile({...userProfile, activityLevel: e.target.value})}
+                        className="mr-4"
+                      />
+                      <div>
+                        <div className="font-medium">{level.label}</div>
+                        <div className="text-sm text-gray-500">Multiplier: {level.multiplier}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {step === 4 && (
+              <div className="space-y-6">
+                <h2 className="text-2xl font-bold text-gray-800">Your Fitness Goal</h2>
+                <div className="grid gap-4">
+                  {goals.map(goal => {
+                    const IconComponent = goal.icon;
+                    return (
+                      <label key={goal.id} className="flex items-center p-6 border rounded-lg cursor-pointer hover:bg-gray-50">
+                        <input
+                          type="radio"
+                          name="goal"
+                          value={goal.id}
+                          checked={userProfile.goal === goal.id}
+                          onChange={e => setUserProfile({...userProfile, goal: e.target.value})}
+                          className="mr-4"
+                        />
+                        <div className={`w-12 h-12 ${goal.color} rounded-lg flex items-center justify-center mr-4`}>
+                          <IconComponent className="text-white" size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-bold text-gray-800">{goal.title}</h3>
+                          <p className="text-gray-600">{goal.description}</p>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {step === 5 && (
+              <div className="space-y-6">
+                <h2 className="text-2xl font-bold text-gray-800">Dietary Preferences</h2>
+                <p className="text-gray-600">Select any dietary restrictions (optional)</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {dietaryOptions.map(option => (
+                    <label key={option} className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={userProfile.dietaryRestrictions.includes(option)}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setUserProfile({
+                              ...userProfile,
+                              dietaryRestrictions: [...userProfile.dietaryRestrictions, option]
+                            });
+                          } else {
+                            setUserProfile({
+                              ...userProfile,
+                              dietaryRestrictions: userProfile.dietaryRestrictions.filter(r => r !== option)
+                            });
+                          }
+                        }}
+                        className="mr-3"
+                      />
+                      {option}
+                    </label>
+                  ))}
+                </div>
+                
+                {step === totalSteps && (
+                  <div className="mt-8 p-4 bg-green-50 rounded-lg">
+                    <h3 className="font-bold text-green-900 mb-2">Your Calculated Targets:</h3>
+                    <p className="text-green-800">Daily Calories: ~{calculateCalories()}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-between mt-8">
+              <button
+                onClick={() => setStep(Math.max(1, step - 1))}
+                className={`px-6 py-2 rounded-lg font-medium ${step === 1 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                disabled={step === 1}
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => {
+                  if (step < totalSteps) {
+                    setStep(step + 1);
+                  } else {
+                    completeOnboarding();
+                  }
+                }}
+                className="px-6 py-2 bg-gradient-to-r from-green-600 to-blue-600 text-white rounded-lg font-medium hover:from-green-700 hover:to-blue-700"
+              >
+                {step === totalSteps ? 'Complete Setup' : 'Next'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const NavigationBar = () => (
+    <nav className="bg-white shadow-sm border-b">
+      <div className="max-w-7xl mx-auto px-6">
+        <div className="flex justify-between items-center h-16">
+          <div className="flex items-center gap-3">
+            <div className="bg-gradient-to-r from-green-600 to-blue-600 p-2 rounded-lg">
+              <Apple className="text-white" size={20} />
+            </div>
+            <span className="text-xl font-bold">EatWell</span>
+            {userProfile.isPremium && (
+              <div className="bg-gradient-to-r from-yellow-400 to-orange-500 px-2 py-1 rounded-full flex items-center gap-1">
+                <Crown className="text-white" size={12} />
+                <span className="text-white text-xs font-bold">PREMIUM</span>
+              </div>
+            )}
+          </div>
+          
+          <div className="flex space-x-1">
+            {[
+              { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+              { id: 'meals', label: 'Meal Plan', icon: Calendar },
+              { id: 'fridge', label: 'Fridge Mode', icon: Refrigerator, premium: true },
+              { id: 'macro-target', label: 'Macro Target', icon: Calculator, premium: true },
+              { id: 'shopping
