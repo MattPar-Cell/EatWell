@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EatWell</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: 'Roboto', sans-serif;
+      background: linear-gradient(135deg, #E8F5E9, #C8E6C9);
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .screen {
+      display: none;
+      max-width: 400px;
+      width: 100%;
+      margin: 20px;
+      background: #F1F8E9;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      padding: 24px;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+    .screen.active {
+      display: block;
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .input-container {
+      display: flex;
+      align-items: center;
+      background: #F1F8E9;
+      border: 1px solid #C8E6C9;
+      border-radius: 8px;
+      padding: 8px;
+      margin-bottom: 16px;
+      position: relative;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+    .input-container:hover, .input-container:focus-within {
+      border-color: #7CB342;
+      box-shadow: 0 0 8px rgba(124, 179, 66, 0.3);
+    }
+    .input-container.error {
+      border-color: #EF4444;
+    }
+    .input-container.error:hover {
+      border-color: #F06292;
+    }
+    .input-container i {
+      color: #76FF03;
+      margin-right: 8px;
+    }
+    .input-container input, .input-container select {
+      flex: 1;
+      border: none;
+      outline: none;
+      font-size: 16px;
+      background: transparent;
+      color: #1B5E20;
+    }
+    .error-message {
+      color: #EF4444;
+      font-size: 12px;
+      margin-top: -12px;
+      margin-bottom: 12px;
+      display: none;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .error-message.show {
+      display: block;
+      opacity: 1;
+    }
+    .button {
+      background: #2ECC71;
+      color: white;
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 12px;
+      transition: background 0.3s, transform 0.2s, box-shadow 0.3s;
+    }
+    .button:hover {
+      background: #27AE60;
+      transform: scale(1.05);
+      box-shadow: 0 0 12px rgba(46, 204, 113, 0.4);
+    }
+    .button:active {
+      transform: scale(0.95);
+    }
+    .button:disabled {
+      background: #B0BEC5;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    .secondary-button {
+      background: #F1F8E9;
+      border: 2px solid #2ECC71;
+      color: #2ECC71;
+    }
+    .secondary-button:hover {
+      background: #E8F5E9;
+      transform: scale(1.05);
+      box-shadow: 0 0 8px rgba(46, 204, 113, 0.3);
+    }
+    .premium-button {
+      background: #388E3C;
+      position: relative;
+      overflow: hidden;
+    }
+    .premium-button:hover {
+      background: #2E7D32;
+      transform: scale(1.05);
+      animation: pulse 1.5s infinite;
+      box-shadow: 0 0 12px rgba(56, 142, 60, 0.4);
+    }
+    .upgrade-button {
+      background: #D81B60;
+    }
+    .upgrade-button:hover {
+      background: #C2185B;
+      transform: scale(1.05);
+      box-shadow: 0 0 12px rgba(216, 27, 96, 0.4);
+    }
+    .meal-item, .shopping-item {
+      background: #F1F8E9;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      opacity: 0;
+      transform: translateX(-20px);
+      transition: opacity 0.5s ease, transform 0.5s ease, background 0.3s;
+    }
+    .meal-item.appear, .shopping-item.appear {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    .meal-item i, .shopping-item i {
+      cursor: pointer;
+      color: #76FF03;
+      transition: color 0.3s ease;
+    }
+    .meal-item.favorite i {
+      color: #EF4444;
+    }
+    .shopping-item.purchased {
+      background: #C8E6C9;
+      text-decoration: line-through;
+    }
+    .info-card {
+      background: #F1F8E9;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+      opacity: 0;
+      transform: scale(0.95);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+    .info-card.appear {
+      opacity: 1;
+      transform: scale(1);
+    }
+    .unit-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      margin-bottom: 16px;
+    }
+    .unit-toggle label {
+      margin-left: 8px;
+      font-size: 14px;
+      color: #2ECC71;
+    }
+    .unit-toggle input[type="checkbox"] {
+      appearance: none;
+      width: 40px;
+      height: 20px;
+      background: #C8E6C9;
+      border-radius: 20px;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    .unit-toggle input[type="checkbox"]:checked {
+      background: #2ECC71;
+    }
+    .unit-toggle input[type="checkbox"]::before {
+      content: '';
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      background: #F1F8E9;
+      border-radius: 50%;
+      top: 1px;
+      left: 1px;
+      transition: left 0.3s;
+    }
+    .unit-toggle input[type="checkbox"]:checked::before {
+      left: 21px;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background: #C8E6C9;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #76FF03;
+      transition: width 0.5s ease-in-out;
+    }
+    @keyframes slideBounce {
+      0% { opacity: 0; transform: translateX(100%) scale(0.9); }
+      60% { opacity: 1; transform: translateX(-10%) scale(1.05); }
+      100% { transform: translateX(0) scale(1); }
+    }
+    .slide-bounce {
+      animation: slideBounce 0.6s ease-out;
+    }
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background-color: rgba(0,0,0,0.4);
+      padding-top: 60px;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .modal.active {
+      opacity: 1;
+    }
+    .modal-content {
+      background: linear-gradient(135deg, #F1F8E9, #E8F5E9);
+      margin: 5% auto;
+      padding: 20px;
+      border: 1px solid #7CB342;
+      width: 80%;
+      max-width: 400px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      animation: modalFadeIn 0.3s;
+    }
+    @keyframes modalFadeIn {
+      from { opacity: 0; transform: scale(0.9) rotate(-2deg); }
+      to { opacity: 1; transform: scale(1) rotate(0); }
+    }
+    .modal-content.closing {
+      animation: modalFadeOut 0.3s;
+    }
+    @keyframes modalFadeOut {
+      from { opacity: 1; transform: scale(1) rotate(0); }
+      to { opacity: 0; transform: scale(0.9) rotate(2deg); }
+    }
+    .close {
+      color: #1B5E20;
+      float: right;
+      font-size: 28px;
+      font-weight: bold;
+    }
+    .close:hover,
+    .close:focus {
+      color: #76FF03;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .suggestion-item {
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    .suggestion-item.appear {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    @media (max-width: 600px) {
+      .screen {
+        margin: 10px;
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Login Screen -->
+  <div id="login-screen" class="screen active">
+    <h1 class="text-2xl font-bold text-center text-[#1B5E20] mb-6">EatWell</h1>
+    <div class="input-container" id="email-container">
+      <i class="material-icons">email</i>
+      <input type="email" id="login-email" placeholder="Email" class="text-[#1B5E20]">
+    </div>
+    <p class="error-message" id="email-error">Please enter a valid email.</p>
+    <div class="input-container" id="password-container">
+      <i class="material-icons">lock</i>
+      <input type="password" id="login-password" placeholder="Password" class="text-[#1B5E20]">
+    </div>
+    <p class="error-message" id="password-error">Password must be at least 6 characters.</p>
+    <div class="button" id="login-button" onclick="handleLogin()">Login</div>
+    <div class="button secondary-button" onclick="handleSignUp()">Sign Up</div>
+  </div>
+
+  <!-- Onboarding Screen -->
+  <div id="onboarding-screen" class="screen">
+    <h1 class="text-2xl font-bold text-center text-[#1B5E20] mb-6" id="onboarding-title">Onboarding - Step 1/5</h1>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progress-fill" style="width: 20%;"></div>
+    </div>
+    <div class="unit-toggle" id="unit-toggle" style="display: none;">
+      <input type="checkbox" id="unit-switch" onchange="toggleUnits()">
+      <label for="unit-switch">Imperial</label>
+    </div>
+    <div id="onboarding-step">
+      <h2 class="text-lg font-semibold text-[#76FF03] mb-4">Step 1: Your Age</h2>
+      <div class="input-container" id="age-container">
+        <i class="material-icons">calendar_today</i>
+        <input type="number" id="age" placeholder="Enter your age" class="text-[#1B5E20]">
+      </div>
+      <p class="error-message" id="age-error">Please enter a valid age (18-100).</p>
+    </div>
+    <div class="button" id="onboarding-next" onclick="handleOnboardingNext()">Next</div>
+  </div>
+
+  <!-- Dashboard Screen -->
+  <div id="dashboard-screen" class="screen">
+    <h1 class="text-2xl font-bold text-center text-[#1B5E20] mb-6">Your Dashboard</h1>
+    <div class="info-card">
+      <p class="text-[#1B5E20]">Daily Calorie Target: <span class="font-semibold text-[#76FF03]" id="tdee">2000 kcal</span></p>
+      <p class="text-[#1B5E20]">Goal: <span class="font-semibold text-[#76FF03]" id="goal">Not Set</span></p>
+    </div>
+    <h2 class="text-lg font-semibold text-[#76FF03] mb-4">Weekly Meal Plan</h2>
+    <div class="meal-item" data-id="1">
+      <div>
+        <p class="font-semibold text-[#1B5E20]">Grilled Chicken Salad</p>
+        <p class="text-sm text-[#1B5E20] opacity-80">Calories: 400 kcal</p>
+        <p class="text-sm text-[#1B5E20] opacity-80">Protein: 30g, Carbs: 20g, Fat: 15g</p>
+        <p class="text-sm text-[#1B5E20] opacity-80">Prep Time: 20 mins</p>
+      </div>
+      <i class="material-icons" onclick="toggleFavorite('1')">favorite_border</i>
+    </div>
+    <div class="meal-item" data-id="2">
+      <div>
+        <p class="font-semibold text-[#1B5E20]">Salmon with Quinoa</p>
+        <p class="text-sm text-[#1B5E20] opacity-80">Calories: 500 kcal</p>
+        <p class="text-sm text-[#1B5E20] opacity-80">Protein: 35g, Carbs: 40g, Fat: 20g</p>
+        <p class="text-sm text-[#1B5E20] opacity-80">Prep Time: 30 mins</p>
+      </div>
+      <i class="material-icons" onclick="toggleFavorite('2')">favorite_border</i>
+    </div>
+    <h2 class="text-lg font-semibold text-[#76FF03] mb-4 mt-6">Shopping List</h2>
+    <div class="shopping-item" data-item="Chicken">
+      <i class="material-icons" onclick="togglePurchased('Chicken')">shopping_cart</i>
+      <p class="text-[#1B5E20]">Chicken</p>
+    </div>
+    <div class="shopping-item" data-item="Lettuce">
+      <i class="material-icons" onclick="togglePurchased('Lettuce')">shopping_cart</i>
+      <p class="text-[#1B5E20]">Lettuce</p>
+    </div>
+    <div class="shopping-item" data-item="Salmon">
+      <i class="material-icons" onclick="togglePurchased('Salmon')">shopping_cart</i>
+      <p class="text-[#1B5E20]">Salmon</p>
+    </div>
+    <div class="shopping-item" data-item="Quinoa">
+      <i class="material-icons" onclick="togglePurchased('Quinoa')">shopping_cart</i>
+      <p class="text-[#1B5E20]">Quinoa</p>
+    </div>
+    <div class="shopping-item" data-item="Olive Oil">
+      <i class="material-icons" onclick="togglePurchased('Olive Oil')">shopping_cart</i>
+      <p class="text-[#1B5E20]">Olive Oil</p>
+    </div>
+    <div class="button premium-button" onclick="openModal('fridgeModal')">Fridge Mode (Premium)</div>
+    <div class="button premium-button" onclick="openModal('macroModal')">Macro Target Mode (Premium)</div>
+    <div class="button upgrade-button" onclick="openModal('upgradeModal')">Upgrade to Premium</div>
+  </div>
+
+  <!-- Fridge Mode Modal -->
+  <div id="fridgeModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="closeModal('fridgeModal')">&times;</span>
+      <h2 class="text-xl font-bold text-center text-[#1B5E20] mb-4">Fridge Mode</h2>
+      <p class="text-[#1B5E20] mb-4">Enter items in your fridge to get meal suggestions!</p>
+      <div class="input-container mb-4">
+        <input type="text" id="fridgeInput" placeholder="e.g., chicken, lettuce, salmon" class="text-[#1B5E20] w-full">
+      </div>
+      <div class="flex justify-between">
+        <div class="button" onclick="suggestMeals()">Suggest Meals</div>
+        <div class="button secondary-button" onclick="clearFridgeInput()">Clear</div>
+      </div>
+      <div id="fridgeSuggestions" class="mt-4"></div>
+    </div>
+  </div>
+
+  <!-- Macro Target Mode Modal -->
+  <div id="macroModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="closeModal('macroModal')">&times;</span>
+      <h2 class="text-xl font-bold text-center text-[#1B5E20] mb-4">Macro Target Mode</h2>
+      <p class="text-[#1B5E20] mb-4">Set your daily macro targets and view breakdown.</p>
+      <div class="input-container mb-2">
+        <i class="material-icons">fitness_center</i>
+        <input type="number" id="proteinTarget" placeholder="Protein (g)" class="text-[#1B5E20]" min="0">
+      </div>
+      <p class="error-message" id="protein-error">Please enter a positive number.</p>
+      <div class="input-container mb-2">
+        <i class="material-icons">grain</i>
+        <input type="number" id="carbsTarget" placeholder="Carbs (g)" class="text-[#1B5E20]" min="0">
+      </div>
+      <p class="error-message" id="carbs-error">Please enter a positive number.</p>
+      <div class="input-container mb-4">
+        <i class="material-icons">local_dining</i>
+        <input type="number" id="fatTarget" placeholder="Fat (g)" class="text-[#1B5E20]" min="0">
+      </div>
+      <p class="error-message" id="fat-error">Please enter a positive number.</p>
+      <div class="button" onclick="updateMacroChart()">Update Chart</div>
+      <canvas id="macroChart" class="mt-4" height="200"></canvas>
+    </div>
+  </div>
+
+  <!-- Upgrade Modal -->
+  <div id="upgradeModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="closeModal('upgradeModal')">&times;</span>
+      <h2 class="text-xl font-bold text-center text-[#1B5E20] mb-4">Upgrade to Premium</h2>
+      <p class="text-[#1B5E20] mb-4">Unlock advanced features to enhance your EatWell experience!</p>
+      <ul class="list-disc pl-5 mb-4 text-[#1B5E20]">
+        <li>Fridge Mode: Meal suggestions based on your ingredients</li>
+        <li>Macro Tracking: Custom targets with visual charts</li>
+        <li>Personalized Meal Plans: Tailored to your goals</li>
+        <li>Ad-free experience</li>
+        <li>Priority support and exclusive recipes</li>
+      </ul>
+      <div class="button upgrade-button" onclick="alert('Upgrading... (simulated)')">Upgrade Now - $4.99/month</div>
+      <div class="button secondary-button mt-2" onclick="alert('Learn more about premium benefits!')">Learn More</div>
+    </div>
+  </div>
+
+  <script>
+    const screens = {
+      login: document.getElementById('login-screen'),
+      onboarding: document.getElementById('onboarding-screen'),
+      dashboard: document.getElementById('dashboard-screen')
+    };
+    let currentStep = 1;
+    const userData = { age: '', weight: '', height: '', gender: '', activityLevel: '', goal: '' };
+    let favorites = JSON.parse(localStorage.getItem('favorites')) || [];
+    let isImperial = false;
+    let macroChart;
+
+    // Initialize favorites and animations
+    function initDashboardAnimations() {
+      const infoCard = document.querySelector('.info-card');
+      const mealItems = document.querySelectorAll('.meal-item');
+      const shoppingItems = document.querySelectorAll('.shopping-item');
+      infoCard.classList.add('appear');
+      mealItems.forEach((item, index) => {
+        setTimeout(() => item.classList.add('appear'), index * 200);
+      });
+      shoppingItems.forEach((item, index) => {
+        setTimeout(() => item.classList.add('appear'), index * 200);
+      });
+    }
+
+    function initFavorites() {
+      favorites.forEach(id => {
+        const meal = document.querySelector(`.meal-item[data-id="${id}"]`);
+        if (meal) {
+          meal.classList.add('favorite');
+          meal.querySelector('i').textContent = 'favorite';
+        }
+      });
+    }
+
+    // Show specific screen
+    function showScreen(screenId) {
+      Object.values(screens).forEach(screen => screen.classList.remove('active'));
+      screens[screenId].classList.add('active');
+      if (screenId === 'dashboard') {
+        initDashboardAnimations();
+      }
+    }
+
+    // Validate email
+    function validateEmail(email) {
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      return re.test(email);
+    }
+
+    // Login validation
+    function validateLogin() {
+      const email = document.getElementById('login-email').value;
+      const password = document.getElementById('login-password').value;
+      const emailError = document.getElementById('email-error');
+      const passwordError = document.getElementById('password-error');
+      const emailContainer = document.getElementById('email-container');
+      const passwordContainer = document.getElementById('password-container');
+      let isValid = true;
+
+      if (!validateEmail(email)) {
+        emailContainer.classList.add('error');
+        emailError.classList.add('show');
+        isValid = false;
+      } else {
+        emailContainer.classList.remove('error');
+        emailError.classList.remove('show');
+      }
+
+      if (password.length < 6) {
+        passwordContainer.classList.add('error');
+        passwordError.classList.add('show');
+        isValid = false;
+      } else {
+        passwordContainer.classList.remove('error');
+        passwordError.classList.remove('show');
+      }
+
+      document.getElementById('login-button').disabled = !isValid;
+      return isValid;
+    }
+
+    // Handle login
+    function handleLogin() {
+      if (!validateLogin()) return;
+      const loginButton = document.getElementById('login-button');
+      loginButton.textContent = 'Logging in...';
+      loginButton.disabled = true;
+      setTimeout(() => {
+        alert('Login successful (simulated)!');
+        loginButton.textContent = 'Login';
+        loginButton.disabled = false;
+        showScreen('onboarding');
+      }, 1000);
+    }
+
+    // Handle sign up
+    function handleSignUp() {
+      if (!validateLogin()) return;
+      const loginButton = document.getElementById('login-button');
+      loginButton.textContent = 'Signing up...';
+      loginButton.disabled = true;
+      setTimeout(() => {
+        alert('Sign up successful (simulated)!');
+        loginButton.textContent = 'Login';
+        loginButton.disabled = false;
+        showScreen('onboarding');
+      }, 1000);
+    }
+
+    // BMR and TDEE calculations (weight in kg, height in cm)
+    function calculateBMR(age, weight, height, gender) {
+      if (gender.toLowerCase() === 'male') {
+        return 10 * weight + 6.25 * height - 5 * age + 5;
+      } else {
+        return 10 * weight + 6.25 * height - 5 * age - 161;
+      }
+    }
+
+    function calculateTDEE(bmr, activityLevel) {
+      const activityFactors = {
+        sedentary: 1.2,
+        light: 1.375,
+        moderate: 1.55,
+        active: 1.725,
+        veryactive: 1.9
+      };
+      return bmr * (activityFactors[activityLevel.toLowerCase()] || 1.2);
+    }
+
+    // Convert units
+    function convertToMetric() {
+      if (isImperial) {
+        const weightInput = document.getElementById('weight');
+        const heightInput = document.getElementById('height');
+        if (weightInput) weightInput.value = (weightInput.value / 2.20462).toFixed(1); // lbs to kg
+        if (heightInput) heightInput.value = (heightInput.value * 2.54).toFixed(0); // inches to cm
+      }
+    }
+
+    function convertToImperial() {
+      if (!isImperial) {
+        const weightInput = document.getElementById('weight');
+        const heightInput = document.getElementById('height');
+        if (weightInput) weightInput.value = (weightInput.value * 2.20462).toFixed(1); // kg to lbs
+        if (heightInput) heightInput.value = (heightInput.value / 2.54).toFixed(1); // cm to inches
+      }
+    }
+
+    // Toggle units
+    function toggleUnits() {
+      isImperial = document.getElementById('unit-switch').checked;
+      const weightLabel = document.querySelector('#onboarding-step h2');
+      const weightPlaceholder = document.querySelector('#onboarding-step input');
+      if (currentStep === 2) {
+        weightLabel.textContent = isImperial ? 'Step 2: Weight (lbs)' : 'Step 2: Weight (kg)';
+        weightPlaceholder.placeholder = isImperial ? 'Enter your weight (lbs)' : 'Enter your weight (kg)';
+        if (isImperial) convertToImperial();
+        else convertToMetric();
+      } else if (currentStep === 3) {
+        weightLabel.textContent = isImperial ? 'Step 3: Height (inches)' : 'Step 3: Height (cm)';
+        weightPlaceholder.placeholder = isImperial ? 'Enter your height (inches)' : 'Enter your height (cm)';
+        if (isImperial) convertToImperial();
+        else convertToMetric();
+      }
+    }
+
+    // Onboarding validation
+    function validateOnboarding() {
+      let isValid = true;
+      let errorMessage = '';
+      let container = document.querySelector('#onboarding-step .input-container');
+      let errorElement = document.querySelector('#onboarding-step .error-message');
+
+      if (currentStep === 5) {
+        container = document.querySelectorAll('#onboarding-step .input-container');
+        errorElement = document.querySelectorAll('#onboarding-step .error-message');
+      }
+
+      if (currentStep === 1) {
+        const age = document.getElementById('age').value;
+        if (!age || age < 18 || age > 100) {
+          isValid = false;
+          errorMessage = 'Please enter a valid age (18-100).';
+        }
+      } else if (currentStep === 2) {
+        const weight = document.getElementById('weight').value;
+        const minWeight = isImperial ? 66 : 30; // approx 66 lbs ~ 30 kg
+        const maxWeight = isImperial ? 661 : 300; // approx 661 lbs ~ 300 kg
+        if (!weight || weight < minWeight || weight > maxWeight) {
+          isValid = false;
+          errorMessage = `Please enter a valid weight (${minWeight}-${maxWeight} ${isImperial ? 'lbs' : 'kg'}).`;
+        }
+      } else if (currentStep === 3) {
+        const height = document.getElementById('height').value;
+        const minHeight = isImperial ? 39 : 100; // approx 39 in ~ 100 cm
+        const maxHeight = isImperial ? 98 : 250; // approx 98 in ~ 250 cm
+        if (!height || height < minHeight || height > maxHeight) {
+          isValid = false;
+          errorMessage = `Please enter a valid height (${minHeight}-${maxHeight} ${isImperial ? 'inches' : 'cm'}).`;
+        }
+      } else if (currentStep === 4) {
+        const gender = document.getElementById('gender').value;
+        if (!gender) {
+          isValid = false;
+          errorMessage = 'Please select a gender.';
+        }
+      } else if (currentStep === 5) {
+        const activityLevel = document.getElementById('activityLevel').value;
+        const goal = document.getElementById('goal').value;
+        if (!activityLevel) {
+          container[0].classList.add('error');
+          errorElement[0].classList.add('show');
+          errorElement[0].textContent = 'Please select an activity level.';
+          isValid = false;
+        } else {
+          container[0].classList.remove('error');
+          errorElement[0].classList.remove('show');
+        }
+        if (!goal) {
+          container[1].classList.add('error');
+          errorElement[1].classList.add('show');
+          errorElement[1].textContent = 'Please select a goal.';
+          isValid = false;
+        } else {
+          container[1].classList.remove('error');
+          errorElement[1].classList.remove('show');
+        }
+        return isValid;
+      }
+
+      if (!isValid) {
+        container.classList.add('error');
+        errorElement.classList.add('show');
+        errorElement.textContent = errorMessage;
+      } else {
+        container.classList.remove('error');
+        errorElement.classList.remove('show');
+      }
+
+      document.getElementById('onboarding-next').disabled = !isValid;
+      return isValid;
+    }
+
+    // Handle onboarding steps
+    function handleOnboardingNext() {
+      if (!validateOnboarding()) return;
+      const stepContent = document.getElementById('onboarding-step');
+      const title = document.getElementById('onboarding-title');
+      const nextButton = document.getElementById('onboarding-next');
+      const unitToggle = document.getElementById('unit-toggle');
+      const progressFill = document.getElementById('progress-fill');
+
+      if (currentStep === 1) {
+        userData.age = document.getElementById('age').value;
+        stepContent.innerHTML = `
+          <h2 class="text-lg font-semibold text-[#76FF03] mb-4">Step 2: Weight (${isImperial ? 'lbs' : 'kg'})</h2>
+          <div class="input-container" id="weight-container">
+            <i class="material-icons">fitness_center</i>
+            <input type="number" id="weight" placeholder="Enter your weight (${isImperial ? 'lbs' : 'kg'})" class="text-[#1B5E20]">
+          </div>
+          <p class="error-message" id="weight-error">Please enter a valid weight.</p>`;
+        title.textContent = 'Onboarding - Step 2/5';
+        unitToggle.style.display = 'flex';
+        progressFill.style.width = '40%';
+        currentStep++;
+      } else if (currentStep === 2) {
+        let weight = parseFloat(document.getElementById('weight').value);
+        if (isImperial) weight = weight / 2.20462; // Convert lbs to kg for storage
+        userData.weight = weight.toFixed(1);
+        stepContent.innerHTML = `
+          <h2 class="text-lg font-semibold text-[#76FF03] mb-4">Step 3: Height (${isImperial ? 'inches' : 'cm'})</h2>
+          <div class="input-container" id="height-container">
+            <i class="material-icons">height</i>
+            <input type="number" id="height" placeholder="Enter your height (${isImperial ? 'inches' : 'cm'})" class="text-[#1B5E20]">
+          </div>
+          <p class="error-message" id="height-error">Please enter a valid height.</p>`;
+        title.textContent = 'Onboarding - Step 3/5';
+        progressFill.style.width = '60%';
+        currentStep++;
+      } else if (currentStep === 3) {
+        let height = parseFloat(document.getElementById('height').value);
+        if (isImperial) height = height * 2.54; // Convert inches to cm for storage
+        userData.height = height.toFixed(0);
+        stepContent.innerHTML = `
+          <h2 class="text-lg font-semibold text-[#76FF03] mb-4">Step 4: Gender</h2>
+          <div class="input-container" id="gender-container">
+            <i class="material-icons">person</i>
+            <select id="gender" class="text-[#1B5E20]">
+              <option value="">Select gender</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </div>
+          <p class="error-message" id="gender-error">Please select a gender.</p>`;
+        title.textContent = 'Onboarding - Step 4/5';
+        unitToggle.style.display = 'none';
+        progressFill.style.width = '80%';
+        currentStep++;
+      } else if (currentStep === 4) {
+        userData.gender = document.getElementById('gender').value;
+        stepContent.innerHTML = `
+          <h2 class="text-lg font-semibold text-[#76FF03] mb-4">Step 5: Activity Level & Goal</h2>
+          <div class="input-container" id="activityLevel-container">
+            <i class="material-icons">directions_run</i>
+            <select id="activityLevel" class="text-[#1B5E20]">
+              <option value="">Select activity level</option>
+              <option value="sedentary">Sedentary</option>
+              <option value="light">Light</option>
+              <option value="moderate">Moderate</option>
+              <option value="active">Active</option>
+              <option value="veryActive">Very Active</option>
+            </select>
+          </div>
+          <p class="error-message" id="activityLevel-error"></p>
+          <div class="input-container" id="goal-container">
+            <i class="material-icons">flag</i>
+            <select id="goal" class="text-[#1B5E20]">
+              <option value="">Select goal</option>
+              <option value="weightLoss">Weight Loss</option>
+              <option value="muscleGain">Muscle Gain</option>
+              <option value="maintenance">Maintenance</option>
+              <option value="endurance">Endurance</option>
+            </select>
+          </div>
+          <p class="error-message" id="goal-error"></p>`;
+        title.textContent = 'Onboarding - Step 5/5';
+        progressFill.style.width = '100%';
+        currentStep++;
+      } else {
+        userData.activityLevel = document.getElementById('activityLevel').value;
+        userData.goal = document.getElementById('goal').value;
+        nextButton.textContent = 'Calculating...';
+        nextButton.disabled = true;
+        setTimeout(() => {
+          const bmr = calculateBMR(
+            parseInt(userData.age),
+            parseFloat(userData.weight),
+            parseFloat(userData.height),
+            userData.gender
+          );
+          const tdee = calculateTDEE(bmr, userData.activityLevel);
+          document.getElementById('tdee').textContent = `${Math.round(tdee)} kcal`;
+          document.getElementById('goal').textContent = userData.goal ? 
+            userData.goal.replace(/([A-Z])/g, ' $1').trim().replace(/^./, str => str.toUpperCase()) : 'Not Set';
+          alert('Onboarding complete! TDEE: ' + Math.round(tdee) + ' kcal');
+          nextButton.textContent = 'Next';
+          nextButton.disabled = false;
+          showScreen('dashboard');
+          initFavorites();
+        }, 1000);
+      }
+      // Add slide-bounce animation to new step content
+      stepContent.classList.add('slide-bounce');
+      setTimeout(() => stepContent.classList.remove('slide-bounce'), 600);
+    }
+
+    // Toggle favorite
+    function toggleFavorite(mealId) {
+      const meal = document.querySelector(`.meal-item[data-id="${mealId}"]`);
+      const icon = meal.querySelector('i');
+      if (favorites.includes(mealId)) {
+        favorites = favorites.filter(id => id !== mealId);
+        meal.classList.remove('favorite');
+        icon.textContent = 'favorite_border';
+      } else {
+        favorites.push(mealId);
+        meal.classList.add('favorite');
+        icon.textContent = 'favorite';
+      }
+      localStorage.setItem('favorites', JSON.stringify(favorites));
+    }
+
+    // Toggle purchased
+    function togglePurchased(item) {
+      const shoppingItem = document.querySelector(`.shopping-item[data-item="${item}"]`);
+      shoppingItem.classList.toggle('purchased');
+      shoppingItem.querySelector('i').textContent = shoppingItem.classList.contains('purchased') ? 'check_circle' : 'shopping_cart';
+    }
+
+    // Modal functions
+    function openModal(modalId) {
+      const modal = document.getElementById(modalId);
+      modal.style.display = 'block';
+      setTimeout(() => modal.classList.add('active'), 10);
+      if (modalId === 'macroModal') {
+        initMacroChart();
+      }
+    }
+
+    function closeModal(modalId) {
+      const modal = document.getElementById(modalId);
+      const modalContent = modal.querySelector('.modal-content');
+      modalContent.classList.add('closing');
+      setTimeout(() => {
+        modal.style.display = 'none';
+        modalContent.classList.remove('closing');
+        modal.classList.remove('active');
+      }, 300);
+    }
+
+    // Suggest meals for Fridge Mode (mock)
+    function suggestMeals() {
+      const input = document.getElementById('fridgeInput').value.toLowerCase();
+      let suggestions = '';
+      if (input.includes('chicken') || input.includes('lettuce')) {
+        suggestions += '<div class="suggestion-item text-[#1B5E20]">Suggested: Grilled Chicken Salad</div>';
+      }
+      if (input.includes('salmon') || input.includes('quinoa')) {
+        suggestions += '<div class="suggestion-item text-[#1B5E20]">Suggested: Salmon with Quinoa</div>';
+      }
+      if (!suggestions) {
+        suggestions = '<div class="suggestion-item text-[#1B5E20]">No suggestions found. Try adding more items!</div>';
+      }
+      const suggestionsContainer = document.getElementById('fridgeSuggestions');
+      suggestionsContainer.innerHTML = suggestions;
+      const suggestionItems = suggestionsContainer.querySelectorAll('.suggestion-item');
+      suggestionItems.forEach((item, index) => {
+        setTimeout(() => item.classList.add('appear'), index * 100);
+      });
+    }
+
+    function clearFridgeInput() {
+      document.getElementById('fridgeInput').value = '';
+      document.getElementById('fridgeSuggestions').innerHTML = '';
+    }
+
+    // Initialize macro chart
+    function initMacroChart() {
+      const ctx = document.getElementById('macroChart').getContext('2d');
+      macroChart = new Chart(ctx, {
+        type: 'pie',
+        data: {
+          labels: ['Protein', 'Carbs', 'Fat'],
+          datasets: [{
+            data: [0, 0, 0],
+            backgroundColor: ['#4CAF50', '#81C784', '#A5D6A7'],
+            borderColor: ['#F1F8E9', '#F1F8E9', '#F1F8E9'],
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { position: 'top', labels: { color: '#1B5E20' } },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  const value = context.raw || 0;
+                  const sum = context.dataset.data.reduce((a, b) => a + b, 0);
+                  const percentage = sum ? ((value / sum) * 100).toFixed(1) : 0;
+                  return `${context.label}: ${value}g (${percentage}%)`;
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Update macro chart with validation
+    function updateMacroChart() {
+      const proteinInput = document.getElementById('proteinTarget');
+      const carbsInput = document.getElementById('carbsTarget');
+      const fatInput = document.getElementById('fatTarget');
+      const proteinError = document.getElementById('protein-error');
+      const carbsError = document.getElementById('carbs-error');
+      const fatError = document.getElementById('fat-error');
+      let isValid = true;
+
+      const protein = parseFloat(proteinInput.value) || 0;
+      const carbs = parseFloat(carbsInput.value) || 0;
+      const fat = parseFloat(fatInput.value) || 0;
+
+      if (protein < 0) {
+        proteinInput.parentElement.classList.add('error');
+        proteinError.classList.add('show');
+        isValid = false;
+      } else {
+        proteinInput.parentElement.classList.remove('error');
+        proteinError.classList.remove('show');
+      }
+      if (carbs < 0) {
+        carbsInput.parentElement.classList.add('error');
+        carbsError.classList.add('show');
+        isValid = false;
+      } else {
+        carbsInput.parentElement.classList.remove('error');
+        carbsError.classList.remove('show');
+      }
+      if (fat < 0) {
+        fatInput.parentElement.classList.add('error');
+        fatError.classList.add('show');
+        isValid = false;
+      } else {
+        fatInput.parentElement.classList.remove('error');
+        fatError.classList.remove('show');
+      }
+
+      if (isValid) {
+        macroChart.data.datasets[0].data = [protein, carbs, fat];
+        macroChart.update();
+      }
+    }
+
+    // Real-time input validation
+    document.getElementById('login-email').addEventListener('input', validateLogin);
+    document.getElementById('login-password').addEventListener('input', validateLogin);
+    document.getElementById('onboarding-screen').addEventListener('input', validateOnboarding, true);
+    document.getElementById('onboarding-screen').addEventListener('change', validateOnboarding, true);
+
+    // Close modal on outside click
+    window.onclick = function(event) {
+      if (event.target.classList.contains('modal')) {
+        closeModal(event.target.id);
+      }
+    }
+  </script>
+</body>
+</html>
